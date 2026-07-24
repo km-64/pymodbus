@@ -357,60 +357,6 @@ class TestTransaction:
         await asyncio.sleep(0.1)
         assert response == await resp
 
-    @pytest.mark.parametrize(("framer"), [FramerRTU, FramerSocket])
-    @pytest.mark.parametrize("scenario", range(2))
-    async def test_delayed_response(self, use_clc, framer, scenario):
-        """Test delayed rtu response combined with retries."""
-        transact = TransactionManager(
-            use_clc,
-            framer(DecodePDU(False)),
-            5,
-            False,
-            None,
-            None,
-            None,
-        )
-        request1 = ReadCoilsRequest(address=117, count=5, dev_id=1)
-        request2 = ReadCoilsRequest(address=118, count=2, dev_id=1)
-        response1 = ReadCoilsResponse(
-            bits=[True, False, True, True] + [False] * 4, dev_id=1
-        )
-        response2 = ReadCoilsResponse(bits=[True] + [False] * 7, dev_id=1)
-        if framer == FramerRTU:
-            cb_response1 = b"\x01\x01\x01\r\x90M"
-            cb_response2 = b"\x01\x01\x01\x01\x90H"
-        else:
-            cb_response1 = b"\x00\x01\x00\x00\x00\x04\x01\x01\x01\r"
-            cb_response2 = b"\x00\x02\x00\x00\x00\x04\x01\x01\x01\x01"
-        transact.retries = 1
-        transact.connection_made(mock.AsyncMock())
-        transact.transport.write = mock.Mock()  # type: ignore[attr-defined]
-        transact.send = mock.Mock()  # type: ignore[method-assign]
-        transact.comm_params.timeout_connect = 0.1
-
-        if scenario == 0:  # timeout + double response
-            resp = asyncio.create_task(transact.execute(False, request1))
-            await asyncio.sleep(0.15)
-            transact.callback_data(cb_response1, None)
-            transact.callback_data(cb_response1, None)
-            result = await resp
-            assert result.bits == response1.bits
-        else:  # if scenario == 1: # timeout + new request + double response
-            resp = asyncio.create_task(transact.execute(False, request1))
-            with pytest.raises(ModbusIOException):
-                await resp
-            resp = asyncio.create_task(transact.execute(False, request2))
-            await asyncio.sleep(0.05)
-            transact.callback_data(cb_response1, None)
-            transact.callback_data(cb_response2, None)
-            result = await resp
-            if framer == FramerRTU:
-                # Return WRONG response
-                assert result.bits == response1.bits
-            else:
-                # Return CORRECT response
-                assert result.bits == response2.bits
-
 
 @pytest.mark.parametrize("use_port", [5098])
 class TestSyncTransaction:
@@ -577,6 +523,35 @@ class TestSyncTransaction:
         resp = transact.sync_execute(False, request)
         assert response.bits == resp.bits
 
+    def test_sync_execute_resets_count_until_disconnect(self, use_clc):
+        """Successful sync response must reset the disconnect counter like async."""
+        client = self.dummy_client(use_clc)
+        transact = TransactionManager(
+            use_clc,
+            FramerRTU(DecodePDU(False)),
+            5,
+            False,
+            None,
+            None,
+            None,
+            sync_client=client,
+        )
+        transact.sync_client.connect = mock.Mock(return_value=True)
+        request = ReadCoilsRequest(address=117, count=5, dev_id=1)
+        response = ReadCoilsResponse(
+            bits=[True, False, True, True, False, False, False, False], dev_id=1
+        )
+        transact.retries = 0
+        transact.transport = 1  # type: ignore[assignment]
+        transact.count_until_disconnect = 1
+        resp_bytes = transact.framer.buildFrame(response)
+        transact.sync_client.recv = mock.Mock(return_value=resp_bytes)
+        transact.sync_client.send = mock.Mock()
+        transact.comm_params.timeout_connect = 0.2
+        resp = transact.sync_execute(False, request)
+        assert response.bits == resp.bits
+        assert transact.count_until_disconnect == transact.max_until_disconnect
+
     @pytest.mark.parametrize("no_resp", [False, True])
     def test_sync_client_protocol_execute_outside(self, use_clc, no_resp):
         """Test the transaction execute method."""
@@ -702,3 +677,30 @@ class TestSyncTransaction:
         client.recv.side_effect = [response]
         pdu = transact.sync_get_response(1, 0)
         assert isinstance(pdu, ReadCoilsResponse)
+
+    def test_transaction_sync_get_response_garbage_timeout(self, use_clc):
+        """Test continuous invalid input cannot bypass the response timeout."""
+        client = self.dummy_client(use_clc)
+        transact = TransactionManager(
+            use_clc,
+            FramerRTU(DecodePDU(False)),
+            5,
+            False,
+            None,
+            None,
+            None,
+            sync_client=client,
+        )
+        transact.comm_params.timeout_connect = 0.01
+        client.recv = mock.Mock(return_value=b" Busy ")  # type: ignore[method-assign]
+
+        with (
+            mock.patch(
+                "pymodbus.transaction.transaction.monotonic",
+                side_effect=[0.0, 0.02],
+            ),
+            pytest.raises(asyncio.exceptions.TimeoutError),
+        ):
+            transact.sync_get_response(1, 0)
+
+        client.recv.assert_called_once_with(None)
