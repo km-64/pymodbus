@@ -9,7 +9,6 @@ from ..framer import FramerType
 from ..pdu import ModbusPDU
 from ..pdu.device import ModbusDeviceIdentification
 from ..simulator import SimDevice
-from ..simulator.simcore import SimCore
 from ..transport import CommParams, CommType
 from .base import ModbusBaseServer
 
@@ -23,7 +22,7 @@ class ModbusTcpServer(ModbusBaseServer):
 
     def __init__(
         self,
-        context: ModbusServerContext | SimDevice | list[SimDevice] | SimCore,
+        context: ModbusServerContext | SimDevice | list[SimDevice],
         *,
         framer=FramerType.SOCKET,
         identity: ModbusDeviceIdentification | None = None,
@@ -87,7 +86,7 @@ class ModbusTlsServer(ModbusTcpServer):
 
     def __init__(
         self,
-        context: ModbusServerContext | SimDevice | list[SimDevice] | SimCore,
+        context: ModbusServerContext | SimDevice | list[SimDevice],
         *,
         framer=FramerType.TLS,
         identity: ModbusDeviceIdentification | None = None,
@@ -149,7 +148,7 @@ class ModbusUdpServer(ModbusBaseServer):
 
     def __init__(
         self,
-        context: ModbusServerContext | SimDevice | list[SimDevice] | SimCore,
+        context: ModbusServerContext | SimDevice | list[SimDevice],
         *,
         framer=FramerType.SOCKET,
         identity: ModbusDeviceIdentification | None = None,
@@ -210,7 +209,7 @@ class ModbusSerialServer(ModbusBaseServer):
 
     def __init__(
         self,
-        context: ModbusServerContext | SimDevice | list[SimDevice] | SimCore,
+        context: ModbusServerContext | SimDevice | list[SimDevice],
         *,
         framer: FramerType = FramerType.RTU,
         identity: ModbusDeviceIdentification | None = None,
